@@ -16,21 +16,14 @@ function Baixar-Arquivo {
     $url = "$repoBase/$nome"
     $destino = Join-Path $dest $nome
     try {
-        Invoke-WebRequest -Uri $url -OutFile $destino -UseBasicParsing -ErrorAction Stop
+        $client = New-Object System.Net.WebClient
+        $client.DownloadFile($url, $destino)
+        $client.Dispose()
         return $true
     }
     catch {
-        Write-Host "Invoke-WebRequest falhou para $nome : $($_.Exception.Message)" -ForegroundColor Yellow
-        try {
-            $client = New-Object System.Net.WebClient
-            $client.DownloadFile($url, $destino)
-            $client.Dispose()
-            return $true
-        }
-        catch {
-            Write-Host "WebClient tambem falhou para $nome : $($_.Exception.Message)" -ForegroundColor Red
-            return $false
-        }
+        Write-Host "Falha ao baixar $nome : $($_.Exception.Message)" -ForegroundColor Red
+        return $false
     }
 }
 

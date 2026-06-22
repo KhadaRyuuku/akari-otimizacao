@@ -439,14 +439,14 @@ for ($i = 0; $i -lt $optimizations.Count; $i++) {
 $categories = $optimizations.Cat | Select-Object -Unique
 
 $categoryIcons = @{
-    "Energia"               = "⚡"
-    "Registro e Jogos"      = "🎮"
-    "Servicos"              = "🔧"
-    "Rede e Sistema"        = "🌐"
-    "Privacidade"           = "🔒"
-    "Manutencao"            = "🧹"
-    "Diagnostico"           = "🔍"
-    "Ferramentas Externas"  = "🧰"
+    "Energia"               = "[E]"
+    "Registro e Jogos"      = "[J]"
+    "Servicos"              = "[S]"
+    "Rede e Sistema"        = "[R]"
+    "Privacidade"           = "[P]"
+    "Manutencao"            = "[M]"
+    "Diagnostico"           = "[D]"
+    "Ferramentas Externas"  = "[F]"
 }
 
 # ---------- Janela principal ----------
@@ -642,7 +642,7 @@ for ($i = 0; $i -lt $optimizations.Count; $i++) {
 $navButtons = @{}
 $navY = 16
 foreach ($cat in $categories) {
-    $icon = if ($categoryIcons.ContainsKey($cat)) { $categoryIcons[$cat] } else { "•" }
+    $icon = if ($categoryIcons.ContainsKey($cat)) { $categoryIcons[$cat] } else { "[-]" }
     $total = ($optimizations | Where-Object { $_.Cat -eq $cat }).Count
 
     $btn = New-Object System.Windows.Forms.Button
@@ -665,7 +665,7 @@ foreach ($cat in $categories) {
 
 function Update-NavCounts {
     foreach ($cat in $categories) {
-        $icon = if ($categoryIcons.ContainsKey($cat)) { $categoryIcons[$cat] } else { "•" }
+        $icon = if ($categoryIcons.ContainsKey($cat)) { $categoryIcons[$cat] } else { "[-]" }
         $idxs = for ($i = 0; $i -lt $optimizations.Count; $i++) { if ($optimizations[$i].Cat -eq $cat) { $i } }
         $total = ($idxs | Measure-Object).Count
         $marcados = 0

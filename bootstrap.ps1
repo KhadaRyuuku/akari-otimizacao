@@ -45,4 +45,4 @@ if (-not $ok1 -or -not $ok2) {
 }
 
 Write-Host "Download concluido." -ForegroundColor Green
-Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$(Join-Path $dest $arquivo1)`""
+Start-Process powershell -ArgumentList "-NoProfile -NoExit -ExecutionPolicy Bypass -File `"$(Join-Path $dest $arquivo1)`""

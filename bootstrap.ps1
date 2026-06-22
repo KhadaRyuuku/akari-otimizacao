@@ -1,4 +1,4 @@
-﻿<#
+<#
     Bootstrap da Central de Otimizacao de PC (Akari)
     --------------------------------------------------
     Este e o arquivo que fica hospedado online. Quem roda o comando de
@@ -9,7 +9,7 @@
     dados do seu repositorio no GitHub.
 #>
 
-$repoBase = "https://raw.githubusercontent.com/KhadaRyuuku/akari-otimizacao/main"
+$repoBase = "https://raw.githubusercontent.com/SEU_USUARIO/SEU_REPOSITORIO/main"
 $destDir = Join-Path $env:TEMP "AkariCentralOtimizacao"
 
 Write-Host "==========================================="

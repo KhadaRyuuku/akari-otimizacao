@@ -9,7 +9,7 @@
     dados do seu repositorio no GitHub.
 #>
 
-$repoBase = "https://raw.githubusercontent.com/SEU_USUARIO/SEU_REPOSITORIO/main"
+$repoBase = "https://raw.githubusercontent.com/KhadaRyuuku/akari-otimizacao/main"
 $destDir = Join-Path $env:TEMP "AkariCentralOtimizacao"
 
 Write-Host "==========================================="

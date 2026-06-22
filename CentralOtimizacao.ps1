@@ -1,16 +1,16 @@
-﻿<#
-    Central de Otimizacao de PC - v3 (Dark Mode)
-    ----------------------------------------------
+<#
+    Central de Otimizacao de PC - v4 (Dark Mode Pro)
+    ----------------------------------------------------
     Ferramenta para uso por um tecnico/amigo otimizando, COM CONSENTIMENTO,
     o computador de um cliente/amigo (localmente ou via acesso remoto).
 
     A lista de otimizacoes fica no arquivo "otimizacoes.csv" (mesma pasta
-    deste script). Para adicionar, remover ou editar nome/risco de qualquer
-    item, abra o otimizacoes.csv no Excel ou Notepad.
+    deste script). Para adicionar, remover ou editar qualquer item, abra
+    o otimizacoes.csv no Excel ou Notepad.
 
-    Marque as caixas desejadas e clique em "Aplicar Selecionados".
-    Um ponto de restauracao do Windows e criado automaticamente antes de
-    qualquer alteracao.
+    Marque os toggles desejados e clique em "Aplicar Selecionados".
+    Um ponto de restauracao do Windows + backup de registro sao criados
+    automaticamente antes de qualquer alteracao.
 #>
 
 try { $Host.UI.RawUI.WindowTitle = "Akari - Central de Otimizacao" } catch {}
@@ -37,18 +37,35 @@ Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
 
-# ---------- P/Invoke para deixar a barra de titulo nativa tambem no escuro ----------
+# ---------- P/Invoke: titulo escuro + DPI awareness ----------
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
-public class DarkModeHelper {
+public class AkariNative {
     [DllImport("dwmapi.dll")]
     public static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
+    [DllImport("user32.dll")]
+    public static extern bool SetProcessDPIAware();
 }
 "@
 
+try { [AkariNative]::SetProcessDPIAware() | Out-Null } catch {}
+
+function Set-DarkTitleBar {
+    param($handle)
+    foreach ($attr in @(20, 19)) {
+        try {
+            $val = 1
+            [AkariNative]::DwmSetWindowAttribute($handle, $attr, [ref]$val, 4) | Out-Null
+        }
+        catch {}
+    }
+}
+
 $logPath = "$env:USERPROFILE\Desktop\OtimizacaoPC_log.txt"
+$backupRoot = "$env:USERPROFILE\Desktop\AkariBackups"
 $script:needsRestart = $false
+$script:lastBackupFolder = $null
 $fontFamily = "Corbel"
 
 $logoBase64 = "iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAYAAADDPmHLAAAwJklEQVR42u2dd5wkZZ3/38/zVFXHybMzs3lZdpcoKOCBiooiwQQo" +
@@ -232,11 +249,13 @@ catch {
 $colorBg = [System.Drawing.Color]::FromArgb(8, 8, 8)
 $colorSidebar = [System.Drawing.Color]::FromArgb(12, 12, 12)
 $colorPanel = [System.Drawing.Color]::FromArgb(16, 16, 16)
+$colorPanelHover = [System.Drawing.Color]::FromArgb(26, 26, 26)
 $colorAccent = [System.Drawing.Color]::FromArgb(214, 40, 70)
 $colorAccentDim = [System.Drawing.Color]::FromArgb(90, 35, 42)
-$colorText = [System.Drawing.Color]::FromArgb(240, 240, 240)
+$colorText = [System.Drawing.Color]::FromArgb(235, 235, 235)
 $colorTextDim = [System.Drawing.Color]::FromArgb(145, 145, 145)
 $colorBorder = [System.Drawing.Color]::FromArgb(40, 40, 40)
+$colorTrackOff = [System.Drawing.Color]::FromArgb(60, 60, 60)
 
 function Get-RiskColor {
     param([string]$risco)
@@ -292,6 +311,72 @@ function Add-GradientBackground {
         }.GetNewClosure())
 }
 
+# ---------- Toggle Switch customizado (substitui o checkbox tradicional) ----------
+function New-ToggleItem {
+    param([string]$labelText, [System.Drawing.Color]$riskColor)
+
+    $cb = New-Object System.Windows.Forms.CheckBox
+    $cb.Text = $labelText
+    $cb.AutoSize = $false
+    $cb.Width = 690
+    $cb.Height = 24
+    $cb.FlatStyle = "Flat"
+    $cb.BackColor = $colorPanel
+    $cb.Tag = @{ Hover = $false }
+
+    $cb.Add_Paint({
+            param($s, $e)
+            $g = $e.Graphics
+            $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+
+            $bg = if ($s.Tag.Hover) { $colorPanelHover } else { $colorPanel }
+            $bgBrush = New-Object System.Drawing.SolidBrush($bg)
+            $g.FillRectangle($bgBrush, $s.ClientRectangle)
+            $bgBrush.Dispose()
+
+            $trackW = 38; $trackH = 18
+            $trackY = [int](($s.Height - $trackH) / 2)
+            $trackRect = New-Object System.Drawing.Rectangle(2, $trackY, $trackW, $trackH)
+            $trackColor = if ($s.Checked) { $colorAccent } else { $colorTrackOff }
+            $trackBrush = New-Object System.Drawing.SolidBrush($trackColor)
+            $tpath = New-Object System.Drawing.Drawing2D.GraphicsPath
+            $d = $trackH
+            $tpath.AddArc($trackRect.X, $trackRect.Y, $d, $d, 90, 180)
+            $tpath.AddArc($trackRect.Right - $d, $trackRect.Y, $d, $d, 270, 180)
+            $tpath.CloseFigure()
+            $g.FillPath($trackBrush, $tpath)
+            $trackBrush.Dispose()
+            $tpath.Dispose()
+
+            $thumbD = $trackH - 4
+            $thumbX = if ($s.Checked) { $trackRect.Right - $thumbD - 2 } else { $trackRect.X + 2 }
+            $thumbY = $trackRect.Y + 2
+            $thumbBrush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::White)
+            $g.FillEllipse($thumbBrush, $thumbX, $thumbY, $thumbD, $thumbD)
+            $thumbBrush.Dispose()
+
+            $dotX = $trackRect.Right + 12
+            $dotY = [int](($s.Height - 8) / 2)
+            $dotBrush = New-Object System.Drawing.SolidBrush($s.Tag.RiskColor)
+            $g.FillEllipse($dotBrush, $dotX, $dotY, 8, 8)
+            $dotBrush.Dispose()
+
+            $textBrush = New-Object System.Drawing.SolidBrush($colorText)
+            $textRectF = New-Object System.Drawing.RectangleF(($dotX + 14), 0, ($s.Width - $dotX - 14), $s.Height)
+            $sf = New-Object System.Drawing.StringFormat
+            $sf.LineAlignment = [System.Drawing.StringAlignment]::Center
+            $g.DrawString($s.Text, $s.Font, $textBrush, $textRectF, $sf)
+            $textBrush.Dispose()
+            $sf.Dispose()
+        }.GetNewClosure())
+
+    $cb.Tag.RiskColor = $riskColor
+    $cb.Add_CheckedChanged({ $this.Invalidate() })
+    $cb.Add_MouseEnter({ $this.Tag.Hover = $true; $this.Invalidate() })
+    $cb.Add_MouseLeave({ $this.Tag.Hover = $false; $this.Invalidate() })
+    return $cb
+}
+
 # ---------- Carregar lista de otimizacoes do CSV externo ----------
 $csvPath = Join-Path $PSScriptRoot "otimizacoes.csv"
 
@@ -313,14 +398,26 @@ catch {
 $optimizations = @()
 foreach ($row in $rows) {
     $sufixo = ""
-    if ($row.RequerReinicio -eq "Sim") { $sufixo = "   (requer reiniciar)" }
+    if ($row.RequerReinicio -eq "Sim") { $sufixo = "  (requer reiniciar)" }
+
+    $verifyBlock = $null
+    if ($row.PSObject.Properties.Match("Verificacao").Count -gt 0 -and $row.Verificacao -and $row.Verificacao.Trim() -ne "") {
+        try { $verifyBlock = [scriptblock]::Create($row.Verificacao) } catch { $verifyBlock = $null }
+    }
+
+    $descricao = ""
+    if ($row.PSObject.Properties.Match("Descricao").Count -gt 0) { $descricao = $row.Descricao }
+
     $optimizations += @{
-        Cat     = $row.Categoria
-        Nome    = $row.Nome
-        Risco   = $row.Risco
-        Label   = "$($row.Nome)$sufixo"
-        Restart = ($row.RequerReinicio -eq "Sim")
-        Action  = [scriptblock]::Create($row.Comando)
+        Cat        = $row.Categoria
+        Nome       = $row.Nome
+        Risco      = $row.Risco
+        Descricao  = $descricao
+        Label      = "$($row.Nome)$sufixo"
+        Restart    = ($row.RequerReinicio -eq "Sim")
+        ComandoRaw = $row.Comando
+        Action     = [scriptblock]::Create($row.Comando)
+        Verify     = $verifyBlock
     }
 }
 
@@ -329,22 +426,41 @@ if ($optimizations.Count -eq 0) {
     exit
 }
 
+# Verifica o estado atual do sistema e pre-marca o que ja esta aplicado
+for ($i = 0; $i -lt $optimizations.Count; $i++) {
+    $opt = $optimizations[$i]
+    $jaAplicado = $false
+    if ($opt.Verify) {
+        try { $jaAplicado = [bool](& $opt.Verify) } catch { $jaAplicado = $false }
+    }
+    $optimizations[$i].JaAplicado = $jaAplicado
+}
+
 $categories = $optimizations.Cat | Select-Object -Unique
+
+$categoryIcons = @{
+    "Energia"               = "⚡"
+    "Registro e Jogos"      = "🎮"
+    "Servicos"              = "🔧"
+    "Rede e Sistema"        = "🌐"
+    "Privacidade"           = "🔒"
+    "Manutencao"            = "🧹"
+    "Diagnostico"           = "🔍"
+    "Ferramentas Externas"  = "🧰"
+}
 
 # ---------- Janela principal ----------
 $form = New-Object System.Windows.Forms.Form
 $form.Text = "Central de Otimizacao de PC"
-$form.Size = New-Object System.Drawing.Size(980, 720)
+$form.ClientSize = New-Object System.Drawing.Size(980, 805)
 $form.StartPosition = "CenterScreen"
 $form.FormBorderStyle = "FixedDialog"
 $form.MaximizeBox = $false
 $form.BackColor = $colorBg
 $form.Font = New-Object System.Drawing.Font($fontFamily, 9)
 
-$form.Add_Shown({
-        $val = 1
-        [DarkModeHelper]::DwmSetWindowAttribute($form.Handle, 20, [ref]$val, 4) | Out-Null
-    })
+$form.Add_Load({ Set-DarkTitleBar $form.Handle })
+$form.Add_Shown({ Set-DarkTitleBar $form.Handle })
 
 Add-GradientBackground $form ([System.Drawing.Color]::FromArgb(14, 14, 14)) ([System.Drawing.Color]::FromArgb(4, 4, 4))
 
@@ -384,28 +500,29 @@ $titleLbl.AutoSize = $true
 $headerPanel.Controls.Add($titleLbl)
 
 $subtitleLbl = New-Object System.Windows.Forms.Label
-$subtitleLbl.Text = "Marque as otimizacoes desejadas e clique em Aplicar Selecionados"
+$subtitleLbl.Text = "Marque os toggles desejados e clique em Aplicar Selecionados"
 $subtitleLbl.ForeColor = $colorTextDim
 $subtitleLbl.Font = New-Object System.Drawing.Font($fontFamily, 9)
 $subtitleLbl.Location = New-Object System.Drawing.Point(($tituloX + 2), 38)
 $subtitleLbl.AutoSize = $true
 $headerPanel.Controls.Add($subtitleLbl)
 
-# Legenda de risco (quadradinho colorido em vez de caractere especial - evita bug de encoding)
+# Legenda de risco (quadradinho colorido - indicador pequeno, nao colore o texto das opcoes)
 $legendaX = 480
 foreach ($item in @(@("Baixo", "Baixo"), @("Medio", "Medio"), @("Alto", "Alto"), @("Nenhum", "Info"))) {
     $swatch = New-Object System.Windows.Forms.Panel
     $swatch.BackColor = Get-RiskColor $item[0]
-    $swatch.Size = New-Object System.Drawing.Size(12, 12)
-    $swatch.Location = New-Object System.Drawing.Point($legendaX, 26)
+    $swatch.Size = New-Object System.Drawing.Size(10, 10)
+    $swatch.Location = New-Object System.Drawing.Point($legendaX, 27)
     $headerPanel.Controls.Add($swatch)
     $lbl = New-Object System.Windows.Forms.Label
     $lbl.Text = $item[1]
     $lbl.ForeColor = $colorTextDim
-    $lbl.Location = New-Object System.Drawing.Point(($legendaX + 18), 24)
+    $lbl.Font = New-Object System.Drawing.Font($fontFamily, 8.5)
+    $lbl.Location = New-Object System.Drawing.Point(($legendaX + 16), 25)
     $lbl.AutoSize = $true
     $headerPanel.Controls.Add($lbl)
-    $legendaX += 68
+    $legendaX += 64
 }
 
 # ---------- Botao de Discord (com efeito de flash ao clicar) ----------
@@ -464,15 +581,15 @@ $discordBtn.Add_MouseLeave({
 $sidebar = New-Object System.Windows.Forms.Panel
 $sidebar.BackColor = $colorSidebar
 $sidebar.Location = New-Object System.Drawing.Point(0, 64)
-$sidebar.Size = New-Object System.Drawing.Size(210, 526)
+$sidebar.Size = New-Object System.Drawing.Size(210, 560)
 $form.Controls.Add($sidebar)
 Add-GradientBackground $sidebar ([System.Drawing.Color]::FromArgb(16, 16, 16)) ([System.Drawing.Color]::FromArgb(8, 8, 8))
 
-# ---------- Painel de conteudo (checkboxes da categoria ativa) ----------
+# ---------- Painel de conteudo (toggles da categoria ativa) ----------
 $contentOuter = New-Object System.Windows.Forms.Panel
 $contentOuter.BackColor = $colorPanel
 $contentOuter.Location = New-Object System.Drawing.Point(220, 74)
-$contentOuter.Size = New-Object System.Drawing.Size(740, 506)
+$contentOuter.Size = New-Object System.Drawing.Size(740, 546)
 $form.Controls.Add($contentOuter)
 Add-GradientBackground $contentOuter ([System.Drawing.Color]::FromArgb(20, 20, 20)) ([System.Drawing.Color]::FromArgb(11, 11, 11))
 Set-RoundedRegion $contentOuter 14
@@ -488,35 +605,48 @@ $contentPanel = New-Object System.Windows.Forms.Panel
 $contentPanel.BackColor = $colorPanel
 $contentPanel.AutoScroll = $true
 $contentPanel.Location = New-Object System.Drawing.Point(10, 46)
-$contentPanel.Size = New-Object System.Drawing.Size(720, 450)
+$contentPanel.Size = New-Object System.Drawing.Size(720, 486)
 $contentOuter.Controls.Add($contentPanel)
 
-# ---------- Cria checkboxes (uma vez) e organiza por categoria ----------
+# ---------- Cria toggles + descricao (uma vez) e organiza por categoria ----------
 $checkboxMap = @{}
+$descLabelMap = @{}
 $yByCategory = @{}
 foreach ($cat in $categories) { $yByCategory[$cat] = 8 }
 
 for ($i = 0; $i -lt $optimizations.Count; $i++) {
     $opt = $optimizations[$i]
-    $cb = New-Object System.Windows.Forms.CheckBox
-    $cb.Text = $opt.Label
-    $cb.AutoSize = $false
-    $cb.Width = 690
-    $cb.Height = 30
-    $cb.ForeColor = Get-RiskColor $opt.Risco
-    $cb.BackColor = $colorPanel
-    $cb.FlatStyle = "Flat"
-    $cb.Location = New-Object System.Drawing.Point(6, $yByCategory[$opt.Cat])
+    $y = $yByCategory[$opt.Cat]
+
+    $cb = New-ToggleItem $opt.Label (Get-RiskColor $opt.Risco)
+    $cb.Location = New-Object System.Drawing.Point(6, $y)
+    $cb.Checked = [bool]$opt.JaAplicado
+    $cb.Font = New-Object System.Drawing.Font($fontFamily, 9.5)
     $checkboxMap[$i] = $cb
-    $yByCategory[$opt.Cat] += 32
+
+    $descLbl = New-Object System.Windows.Forms.Label
+    $descLbl.Text = $opt.Descricao
+    $descLbl.ForeColor = $colorTextDim
+    $descLbl.Font = New-Object System.Drawing.Font($fontFamily, 8, [System.Drawing.FontStyle]::Regular)
+    $descLbl.AutoSize = $false
+    $descLbl.Width = 645
+    $descLbl.Height = 15
+    $descLbl.Location = New-Object System.Drawing.Point(64, ($y + 24))
+    $descLbl.BackColor = $colorPanel
+    $descLabelMap[$i] = $descLbl
+
+    $yByCategory[$opt.Cat] += 48
 }
 
-# ---------- Botoes de navegacao lateral ----------
+# ---------- Botoes de navegacao lateral (com icone e contador) ----------
 $navButtons = @{}
 $navY = 16
 foreach ($cat in $categories) {
+    $icon = if ($categoryIcons.ContainsKey($cat)) { $categoryIcons[$cat] } else { "•" }
+    $total = ($optimizations | Where-Object { $_.Cat -eq $cat }).Count
+
     $btn = New-Object System.Windows.Forms.Button
-    $btn.Text = "  $cat"
+    $btn.Text = "$icon  $cat"
     $btn.TextAlign = "MiddleLeft"
     $btn.FlatStyle = "Flat"
     $btn.FlatAppearance.BorderSize = 0
@@ -531,6 +661,17 @@ foreach ($cat in $categories) {
     $sidebar.Controls.Add($btn)
     $navButtons[$cat] = $btn
     $navY += 42
+}
+
+function Update-NavCounts {
+    foreach ($cat in $categories) {
+        $icon = if ($categoryIcons.ContainsKey($cat)) { $categoryIcons[$cat] } else { "•" }
+        $idxs = for ($i = 0; $i -lt $optimizations.Count; $i++) { if ($optimizations[$i].Cat -eq $cat) { $i } }
+        $total = ($idxs | Measure-Object).Count
+        $marcados = 0
+        foreach ($i in $idxs) { if ($checkboxMap[$i].Checked) { $marcados++ } }
+        $navButtons[$cat].Text = "$icon  $cat  ($marcados/$total)"
+    }
 }
 
 $navHoverColor = [System.Drawing.Color]::FromArgb(26, 26, 26)
@@ -564,7 +705,10 @@ function Select-Category {
     $contentPanel.Controls.Clear()
     $itens = @()
     for ($i = 0; $i -lt $optimizations.Count; $i++) {
-        if ($optimizations[$i].Cat -eq $cat) { $itens += $checkboxMap[$i] }
+        if ($optimizations[$i].Cat -eq $cat) {
+            $itens += $checkboxMap[$i]
+            $itens += $descLabelMap[$i]
+        }
     }
     $contentPanel.Controls.AddRange($itens)
 }
@@ -573,6 +717,11 @@ foreach ($cat in $categories) {
     $navButtons[$cat].Add_Click({ Select-Category $this.Tag })
 }
 
+for ($i = 0; $i -lt $optimizations.Count; $i++) {
+    $checkboxMap[$i].Add_CheckedChanged({ Update-NavCounts }.GetNewClosure())
+}
+
+Update-NavCounts
 Select-Category $categories[0]
 
 # ---------- Botoes de acao ----------
@@ -592,33 +741,74 @@ function New-StyledButton {
     return $b
 }
 
-$btnAll = New-StyledButton "Selecionar Tudo" 220 590 150 34 $colorPanel $colorText
+$btnAll = New-StyledButton "Selecionar Tudo" 220 634 110 38 $colorPanel $colorText
 $btnAll.Add_Click({ foreach ($cb in $checkboxMap.Values) { $cb.Checked = $true } })
 Add-ClickEffect $btnAll $colorPanel (Adjust-Color $colorPanel 14) (Adjust-Color $colorPanel -10)
 $form.Controls.Add($btnAll)
 
-$btnNone = New-StyledButton "Desmarcar Tudo" 380 590 150 34 $colorPanel $colorText
+$btnNone = New-StyledButton "Desmarcar Tudo" 336 634 110 38 $colorPanel $colorText
 $btnNone.Add_Click({ foreach ($cb in $checkboxMap.Values) { $cb.Checked = $false } })
 Add-ClickEffect $btnNone $colorPanel (Adjust-Color $colorPanel 14) (Adjust-Color $colorPanel -10)
 $form.Controls.Add($btnNone)
 
-$btnApply = New-StyledButton "Aplicar Selecionados" 540 590 190 34 $colorAccent ([System.Drawing.Color]::White)
+$btnApply = New-StyledButton "Aplicar Selecionados" 452 630 230 46 $colorAccent ([System.Drawing.Color]::White)
+$btnApply.Font = New-Object System.Drawing.Font($fontFamily, 11, [System.Drawing.FontStyle]::Bold)
+$btnApply.FlatAppearance.BorderSize = 2
+$btnApply.FlatAppearance.BorderColor = $colorAccent
 Add-ClickEffect $btnApply $colorAccent (Adjust-Color $colorAccent 22) (Adjust-Color $colorAccent -35)
 $form.Controls.Add($btnApply)
 
+$glowTimer = New-Object System.Windows.Forms.Timer
+$glowTimer.Interval = 60
+$script:glowPhase = 0.0
+$glowTimer.Add_Tick({
+        $script:glowPhase += 0.25
+        $intensity = [int](40 + 40 * [Math]::Sin($script:glowPhase))
+        try { $btnApply.FlatAppearance.BorderColor = Adjust-Color $colorAccent $intensity } catch {}
+    })
+$glowTimer.Start()
+
+$btnRevertColor = [System.Drawing.Color]::FromArgb(50, 50, 55)
+$btnRevert = New-StyledButton "Reverter Mudancas" 688 634 130 38 $btnRevertColor $colorText
+Add-ClickEffect $btnRevert $btnRevertColor (Adjust-Color $btnRevertColor 16) (Adjust-Color $btnRevertColor -10)
+$form.Controls.Add($btnRevert)
+
 $btnRestartColor = [System.Drawing.Color]::FromArgb(70, 40, 40)
-$btnRestart = New-StyledButton "Reiniciar PC" 740 590 130 34 $btnRestartColor ([System.Drawing.Color]::FromArgb(255, 140, 140))
+$btnRestart = New-StyledButton "Reiniciar PC" 824 634 110 38 $btnRestartColor ([System.Drawing.Color]::FromArgb(255, 140, 140))
 $btnRestart.Add_Click({ Restart-Computer -Force })
 Add-ClickEffect $btnRestart $btnRestartColor (Adjust-Color $btnRestartColor 22) (Adjust-Color $btnRestartColor -18)
 $form.Controls.Add($btnRestart)
+
+# ---------- Status + barra de progresso ----------
+$statusLbl = New-Object System.Windows.Forms.Label
+$statusLbl.Text = "Pronto."
+$statusLbl.ForeColor = $colorTextDim
+$statusLbl.Font = New-Object System.Drawing.Font($fontFamily, 8.5)
+$statusLbl.Location = New-Object System.Drawing.Point(220, 680)
+$statusLbl.AutoSize = $true
+$form.Controls.Add($statusLbl)
+
+$progressBar = New-Object System.Windows.Forms.ProgressBar
+$progressBar.Location = New-Object System.Drawing.Point(220, 698)
+$progressBar.Size = New-Object System.Drawing.Size(740, 14)
+$progressBar.Minimum = 0
+$progressBar.Maximum = 100
+$progressBar.Value = 0
+$form.Controls.Add($progressBar)
 
 # ---------- Log ----------
 $logLabel = New-Object System.Windows.Forms.Label
 $logLabel.Text = "LOG"
 $logLabel.ForeColor = $colorTextDim
-$logLabel.Location = New-Object System.Drawing.Point(220, 632)
+$logLabel.Font = New-Object System.Drawing.Font($fontFamily, 8.5, [System.Drawing.FontStyle]::Bold)
+$logLabel.Location = New-Object System.Drawing.Point(220, 720)
 $logLabel.AutoSize = $true
 $form.Controls.Add($logLabel)
+
+$btnExportLog = New-StyledButton "Exportar Log" 860 716 100 26 $colorPanel $colorTextDim
+$btnExportLog.Font = New-Object System.Drawing.Font($fontFamily, 8)
+Add-ClickEffect $btnExportLog $colorPanel (Adjust-Color $colorPanel 14) (Adjust-Color $colorPanel -10)
+$form.Controls.Add($btnExportLog)
 
 $logBox = New-Object System.Windows.Forms.TextBox
 $logBox.Multiline = $true
@@ -627,9 +817,10 @@ $logBox.ReadOnly = $true
 $logBox.BackColor = [System.Drawing.Color]::FromArgb(4, 4, 4)
 $logBox.ForeColor = [System.Drawing.Color]::FromArgb(120, 220, 140)
 $logBox.BorderStyle = "FixedSingle"
-$logBox.Location = New-Object System.Drawing.Point(220, 650)
-$logBox.Size = New-Object System.Drawing.Size(740, 56)
+$logBox.Location = New-Object System.Drawing.Point(220, 740)
+$logBox.Size = New-Object System.Drawing.Size(740, 50)
 $logBox.Font = New-Object System.Drawing.Font("Consolas", 9)
+Set-RoundedRegion $logBox 8
 $form.Controls.Add($logBox)
 
 function Write-Log {
@@ -639,9 +830,112 @@ function Write-Log {
     Add-Content -Path $logPath -Value $line
 }
 
+$btnExportLog.Add_Click({
+        try {
+            $exportPath = "$env:USERPROFILE\Desktop\OtimizacaoPC_log_$(Get-Date -Format 'yyyyMMdd_HHmmss').txt"
+            $logBox.Text | Out-File -FilePath $exportPath -Encoding UTF8
+            [System.Windows.Forms.MessageBox]::Show("Log exportado para:`n$exportPath", "Exportar Log", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
+        }
+        catch {
+            [System.Windows.Forms.MessageBox]::Show("Erro ao exportar log: $($_.Exception.Message)", "Erro", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error) | Out-Null
+        }
+    })
+
+# ---------- Backup e reversao de registro ----------
+function Get-RegistryPathsFromCommand {
+    param([string]$cmdText)
+    $found = [regex]::Matches($cmdText, "(HKLM|HKCU):\\[^'`"]+")
+    $paths = @()
+    foreach ($m in $found) { $paths += $m.Value }
+    return ($paths | Select-Object -Unique)
+}
+
+function ConvertTo-RegExePath {
+    param([string]$psPath)
+    return ($psPath -replace '^(HKLM|HKCU):\\', '$1\')
+}
+
+function Backup-RegistrySnapshot {
+    param([array]$selectedIndexes)
+    $allPaths = @()
+    foreach ($i in $selectedIndexes) {
+        $allPaths += Get-RegistryPathsFromCommand $optimizations[$i].ComandoRaw
+    }
+    $allPaths = $allPaths | Select-Object -Unique
+    if ($allPaths.Count -eq 0) { return $null }
+
+    $stamp = Get-Date -Format "yyyyMMdd_HHmmss"
+    $folder = Join-Path $backupRoot $stamp
+    New-Item -Path $folder -ItemType Directory -Force | Out-Null
+
+    foreach ($p in $allPaths) {
+        $regPath = ConvertTo-RegExePath $p
+        $fileName = ($regPath -replace '[\\: ]', '_') + ".reg"
+        $dest = Join-Path $folder $fileName
+        try {
+            & reg.exe export "$regPath" "$dest" /y 2>$null | Out-Null
+        }
+        catch {}
+    }
+    return $folder
+}
+
+function Revert-LastBackup {
+    $folder = $script:lastBackupFolder
+    if ((-not $folder) -or (-not (Test-Path $folder))) {
+        if (Test-Path $backupRoot) {
+            $folder = Get-ChildItem $backupRoot -Directory -ErrorAction SilentlyContinue | Sort-Object Name -Descending | Select-Object -First 1 -ExpandProperty FullName
+        }
+    }
+    if ((-not $folder) -or (-not (Test-Path $folder))) {
+        [System.Windows.Forms.MessageBox]::Show("Nenhum backup de registro encontrado para reverter.", "Reverter", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null
+        return
+    }
+
+    $confirm = [System.Windows.Forms.MessageBox]::Show("Isso vai restaurar o registro para o estado salvo em:`n$folder`n`nAlgumas mudancas de servico/energia precisam ser desfeitas manualmente. Deseja continuar?", "Confirmar Reversao", [System.Windows.Forms.MessageBoxButtons]::YesNo, [System.Windows.Forms.MessageBoxIcon]::Question)
+    if ($confirm -ne [System.Windows.Forms.DialogResult]::Yes) { return }
+
+    $files = Get-ChildItem -Path $folder -Filter "*.reg" -ErrorAction SilentlyContinue
+    $okCount = 0
+    foreach ($f in $files) {
+        try {
+            & reg.exe import "$($f.FullName)" 2>$null | Out-Null
+            $okCount++
+        }
+        catch {}
+    }
+    Write-Log "Reversao concluida: $okCount arquivo(s) de registro restaurado(s) de $folder"
+    [System.Windows.Forms.MessageBox]::Show("Reversao concluida ($okCount arquivo(s) restaurado(s)). Reinicie o PC para garantir que tudo volte ao normal.", "Reverter", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
+}
+
+$btnRevert.Add_Click({ Revert-LastBackup })
+
+# ---------- Aplicar selecionados ----------
 $btnApply.Add_Click({
+        $checkedIdx = @()
+        foreach ($i in ($checkboxMap.Keys | Sort-Object)) { if ($checkboxMap[$i].Checked) { $checkedIdx += $i } }
+
+        if ($checkedIdx.Count -eq 0) {
+            [System.Windows.Forms.MessageBox]::Show("Nenhuma otimizacao selecionada.", "Aviso", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null
+            return
+        }
+
+        $altoRisco = $checkedIdx | Where-Object { $optimizations[$_].Risco -eq "Alto" }
+        if (($altoRisco | Measure-Object).Count -gt 0) {
+            $nomes = ($altoRisco | ForEach-Object { "- " + $optimizations[$_].Nome }) -join "`n"
+            $resp = [System.Windows.Forms.MessageBox]::Show("Os itens abaixo sao de RISCO ALTO:`n`n$nomes`n`nTem certeza que deseja aplicar?", "Confirmar - Risco Alto", [System.Windows.Forms.MessageBoxButtons]::YesNo, [System.Windows.Forms.MessageBoxIcon]::Warning)
+            if ($resp -ne [System.Windows.Forms.DialogResult]::Yes) { return }
+        }
+
         $btnApply.Enabled = $false
+        $btnAll.Enabled = $false
+        $btnNone.Enabled = $false
+        $btnRevert.Enabled = $false
         $logBox.Clear()
+        $progressBar.Value = 0
+        $statusLbl.Text = "Iniciando..."
+        [System.Windows.Forms.Application]::DoEvents()
+
         Write-Log "Iniciando processo de otimizacao..."
 
         try {
@@ -657,24 +951,44 @@ $btnApply.Add_Click({
             Write-Log "AVISO: nao foi possivel criar o ponto de restauracao ($($_.Exception.Message))."
         }
 
-        $applied = 0
-        foreach ($i in ($checkboxMap.Keys | Sort-Object)) {
-            $cb = $checkboxMap[$i]
-            if ($cb.Checked) {
-                $opt = $optimizations[$i]
-                try {
-                    Write-Log "Aplicando: $($opt.Nome)"
-                    & $opt.Action
-                    Write-Log "  -> OK"
-                    $applied++
-                    if ($opt.Restart) { $script:needsRestart = $true }
-                }
-                catch {
-                    Write-Log "  -> ERRO: $($_.Exception.Message)"
-                }
-            }
+        $statusLbl.Text = "Fazendo backup do registro..."
+        [System.Windows.Forms.Application]::DoEvents()
+        $script:lastBackupFolder = Backup-RegistrySnapshot $checkedIdx
+        if ($script:lastBackupFolder) {
+            Write-Log "Backup de registro salvo em: $($script:lastBackupFolder)"
+        }
+        else {
+            Write-Log "Nenhuma chave de registro para backup nos itens selecionados."
         }
 
+        $total = $checkedIdx.Count
+        $count = 0
+        $applied = 0
+        foreach ($i in $checkedIdx) {
+            $count++
+            $opt = $optimizations[$i]
+            $percent = [int](($count / $total) * 100)
+            $progressBar.Value = $percent
+            $statusLbl.Text = "Aplicando: $($opt.Nome)  ($count/$total)"
+            [System.Windows.Forms.Application]::DoEvents()
+
+            try {
+                Write-Log "Aplicando: $($opt.Nome)"
+                $output = & $opt.Action
+                foreach ($line in $output) {
+                    if ($line) { Write-Log "  $line" }
+                }
+                Write-Log "  -> OK"
+                $applied++
+                if ($opt.Restart) { $script:needsRestart = $true }
+            }
+            catch {
+                Write-Log "  -> ERRO: $($_.Exception.Message)"
+            }
+            [System.Windows.Forms.Application]::DoEvents()
+        }
+
+        $statusLbl.Text = "Concluido."
         Write-Log "Concluido. $applied otimizacao(oes) aplicada(s). Log: $logPath"
 
         if ($script:needsRestart) {
@@ -683,7 +997,11 @@ $btnApply.Add_Click({
         else {
             [System.Windows.Forms.MessageBox]::Show("Otimizacoes aplicadas com sucesso!", "Concluido", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
         }
+
         $btnApply.Enabled = $true
+        $btnAll.Enabled = $true
+        $btnNone.Enabled = $true
+        $btnRevert.Enabled = $true
     })
 
 [void]$form.ShowDialog()
